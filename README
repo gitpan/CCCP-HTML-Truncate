@@ -1,0 +1,52 @@
+CCCP-HTML-Truncate version 0.01
+===============================
+
+TNAME
+    CCCP::HTML::Truncate - truncate html with html-entities.
+
+SYNOPSIS
+
+    use CCCP::HTML::Truncate;
+
+    my $html = "<p><b>Ленин</b> &mdash; жил</p>
+        <p><b>Ленин</b> &mdash; жив</p>\n
+        <p><b>Ленин</b> &mdash; будет жить!</p>\n";
+        # -- CASE: Encode::is_utf8($html) eq '0';
+
+    print CCCP::HTML::Truncate->truncate($html,11,undef);
+        # <p><b>Ленин</b> &#x2014; жил</p>&#x2026;
+
+    print CCCP::HTML::Truncate->truncate($html,11,' &#x262D;');
+        # <p><b>Ленин</b> &#x2014; жил</p> &#x262D;i
+
+
+        my $html = "<p><b>Ленин</b> &mdash; жил</p>
+            <p><b>Ленин</b> &mdash; жив</p>\n
+            <p><b>Ленин</b> &mdash; будет жить!</p>\n";
+        # -- CASE: Encode::is_utf8($html) eq '1';
+
+        print CCCP::HTML::Truncate->truncate($html,11,undef);
+            # <p><b>&#x41B;&#x435;&#x43D;&#x438;&#x43D;</b> &#x2014; &#x436;&#x438;&#x43B;</p>&#x2026;
+
+        print CCCP::HTML::Truncate->truncate($html,11,' &#x262D;');
+        # <p><b>&#x41B;&#x435;&#x43D;&#x438;&#x43D;</b> &#x2014; &#x436;&#x438;&#x43B;</p> &#x262D;
+
+DESCRIPTION
+    Truncate html string. Correct job with html entities. Validate truncated html. Check is_utf8 flag.
+
+  METHODS
+   truncate($str,$length,$elips)
+    Class method. Return truncated html string. If turn 'is_utf8' flag on source html, return html with numeric entities, otherwise return strin in
+    $Patched::HTML::Truncate::enc encoding.
+
+  PACKAGE VARIABLES
+   $Patched::HTML::Truncate::enc
+    Default 'koi8-r'
+
+SEE ALSO
+    "HTML::TreeBuilder", "Encode", "HTML::Entities", unicode regexp
+
+AUTHOR
+    Ivan Sivirinov
+
+

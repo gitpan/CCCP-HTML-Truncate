@@ -1,0 +1,6 @@
+Revision history for Perl extension CCCP::HTML::Truncate.
+
+0.01  Sun Jun 27 09:41:31 2010
+	- original version; created by h2xs 1.23 with options
+		-AX CCCP::HTML::Truncate
+
