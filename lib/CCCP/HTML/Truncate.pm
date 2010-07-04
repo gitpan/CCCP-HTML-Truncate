@@ -3,19 +3,29 @@ package CCCP::HTML::Truncate;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use HTML::TreeBuilder;
 use HTML::Entities qw();
-use Encode qw();
+use Encode;
 
 # default cyrillic charset
 $Patched::HTML::Truncate::enc = 'koi8-r';
 
+my $xml_entities = {
+    '&' => '&amp;',
+    '"' => '&#x22;',
+    "'" => '&#x27;',
+    '>' => '&gt;',
+    '<' => '&lt;'
+};
+
 # we need a few package variable (is't "thread safe" mode)
 my $stash = {
-    # default elips &#8230; in numeric mode
+    # default elips &#8230; 
+    # in numeric mode:
     def_elips => '&#x2026;',
+    enc_utf => find_encoding('utf-8'), 
     
     # redefined fields
     # custom elips
@@ -29,12 +39,14 @@ my $stash = {
     # utf_flag
     utf => 0,
     # stoped flag
-    stop => 0   
+    stop => 0,
+    # current default encoding
+    enc_cur => undef
 };
 
 # clear stash between call methods
 sub _clear_stash {
-    map {$stash->{$_} = undef} ('cur_elips');
+    map {$stash->{$_} = undef} ('cur_elips','enc_cur');
     map {$stash->{$_} = 0} ('max_length','cur_length','elips_status','stop','utf');
 }
 
@@ -47,7 +59,11 @@ sub truncate {
     my @ret = ();
     
     # check source string on utf
-    $stash->{utf} = Encode::is_utf8($html_str);
+    Encode::_utf8_on($html_str);
+    $stash->{utf} = (utf8::valid($html_str) and $html_str =~ /[^\p{InBasic_Latin}|\p{isLatin}]/gm) ? 1 : 0;
+    unless ($stash->{utf}) {
+	    Encode::_utf8_off($html_str);	    
+    };
     
     # some check
     return unless $html_str;
@@ -69,40 +85,42 @@ sub truncate {
 		    HTML::Entities::decode($html_str);
     		$html_str = $class->_encode_entities($html_str);
     	};    	
-    	return $html_str;
+    	push @ret,$html_str;
+    } else {
+	    # save length
+	    $stash->{max_length} = $length;
+	    $stash->{cur_length} = 0;
+	    
+	    # make html tree
+	    my $root = HTML::TreeBuilder->new_from_content($html_str);
+	    # iterate html elements
+	    foreach ($root->disembowel()) {
+	        next unless $_;
+	        unless (ref $_) {
+	            # $_ is a string
+	            push @ret,__PACKAGE__->_truncated_text($_);
+	        } elsif (not $stash->{stop}) {
+	            # $_ is a HTML::Element object
+	            push @ret,__PACKAGE__->_get_html($_);
+	        } else {
+	        	$stash->{elips_status} = 2 unless $stash->{elips_status};
+	        	last;
+	        };
+	    };
+	    $root = $root->delete;
     };
     
-    # save length
-    $stash->{max_length} = $length;
-    $stash->{cur_length} = 0;
-    
-    # make html tree
-    my $root = HTML::TreeBuilder->new_from_content($html_str);
-    # iterate html elements
-    foreach ($root->disembowel()) {
-        next unless $_;
-        unless (ref $_) {
-            # $_ is a string
-            push @ret,__PACKAGE__->_truncated_text($_);
-        } elsif (not $stash->{stop}) {
-            # $_ is a HTML::Element object
-            push @ret,__PACKAGE__->_get_html($_);
-        } else {
-        	$stash->{elips_status} = 2 unless $stash->{elips_status};
-        	last;
-        };
-    };
-    
-    $root = $root->delete;
     push @ret,($stash->{cur_elips} || $stash->{def_elips}) if $stash->{elips_status} == 2;
     my $ret = join('',@ret);
     # after we build html tree, all entities is decoded, and truncated html have utf-8 flag
-    Encode::from_to($ret,$Patched::HTML::Truncate::enc,$Patched::HTML::Truncate::enc) 
-                       if (Encode::is_utf8($ret) and not $stash->{utf} and $Patched::HTML::Truncate::enc !~ /utf/i); 
+    if (Encode::is_utf8($ret) and not $stash->{utf} and $Patched::HTML::Truncate::enc !~ /utf/i) {
+	    Encode::from_to($ret,$Patched::HTML::Truncate::enc,$Patched::HTML::Truncate::enc) 
+    } else {
+    	Encode::_utf8_off($ret);
+    };
     
     $ret;
 }
-
 
 # inner method - truncate text
 sub _truncated_text {
@@ -115,9 +133,6 @@ sub _truncated_text {
         return '';
     };
     
-    # ну, здесь всё в порядке.
-    # все etities к этому моменту разыменованы либо в ASCII, либо в unicode 
-    # к примеру
     # HTML::TreeBuilder decode html entities, i.e. string
     # &#8230; &mdash; &#x2605; cccp &#x262D;
     # convert to
@@ -159,9 +174,13 @@ sub _truncated_text {
 sub _encode_entities {
 	my ($class, $str) = @_;
 	return $str unless $str;
-	my $exclude = $stash->{utf} ? '' : '|'.join('\|',chr(247),chr(215));
-	$str =~ s/(?<!\p{isLatin})([^\p{isLatin}|\p{InBasic_Latin}]${exclude}|[<|>|'|"|&])(?!\p{isLatin})/HTML::Entities::encode_entities_numeric($1)/xgem;
-	#$str =~ s/([^\p{Cyrillic}|\p{IsLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
+	my $exclude = $stash->{utf} ? '' : '|'.join('\|',chr(247),chr(215));	
+	if ($stash->{utf}) {
+		#$str = $stash->{enc_utf}->encode($str,Encode::FB_XMLCREF);
+		$str =~ s/([^\p{Cyrillic}|\p{IsLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
+	} else {	     
+	    $str =~ s/(?<!\p{isLatin})([^\p{isLatin}|\p{InBasic_Latin}]${exclude}|[<|>|'|"|&])(?!\p{isLatin})/$stash->{enc_cur}->encode($1,Encode::FB_XMLCREF)/xgem;
+	};	
 	$str;
 }
 
@@ -253,23 +272,10 @@ B<CCCP::HTML::Truncate> - truncate html with html-entities.
     print CCCP::HTML::Truncate->truncate($html,11,' &#x262D;');
     # <p><b>Ленин</b> &#x2014; жил</p> &#x262D;
     
-    
-	my $html = "<p><b>Ленин</b> &mdash; жил</p>
-	<p><b>Ленин</b> &mdash; жив</p>\n
-	<p><b>Ленин</b> &mdash; будет жить!</p>\n";
-	# CASE: Encode::is_utf8($html) eq '1';
-	
-	print CCCP::HTML::Truncate->truncate($html,11);
-	# <p><b>&#x41B;&#x435;&#x43D;&#x438;&#x43D;</b> &#x2014; &#x436;&#x438;&#x43B;</p>&#x2026;
-	
-	print CCCP::HTML::Truncate->truncate($html,11,' &#x262D;');
-    # <p><b>&#x41B;&#x435;&#x43D;&#x438;&#x43D;</b> &#x2014; &#x436;&#x438;&#x43B;</p> &#x262D;
-    
 =head1 DESCRIPTION
 
 Truncate html string. Correct job with html entities.
 Validate truncated html.
-Check is_utf8 flag.
 
 =head1 METHODS
 
@@ -277,13 +283,12 @@ Check is_utf8 flag.
 
 Class method.
 Return truncated html string.
-If turn 'is_utf8' flag on source html, return html with numeric entities,
-otherwise return strin in $Patched::HTML::Truncate::enc encoding.
 
 =head1 PACKAGE VARIABLES
 
 =head3 $Patched::HTML::Truncate::enc
 
+If source string in 'utf-8', return truncated 'utf-8', otherwise return truncated string in $Patched::HTML::Truncate::enc.
 Default 'koi8-r'
 
 =head1 SEE ALSO

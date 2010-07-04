@@ -4,3 +4,6 @@ Revision history for Perl extension CCCP::HTML::Truncate.
 	- original version; created by h2xs 1.23 with options
 		-AX CCCP::HTML::Truncate
 
+0.02  Jul 01 09:41:31 2010
+    - add native detect utf-8
+    - return always string with entities
