@@ -3,7 +3,7 @@ package CCCP::HTML::Truncate;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use HTML::TreeBuilder;
 use HTML::Entities qw();
@@ -62,7 +62,7 @@ sub truncate {
     Encode::_utf8_on($html_str);
     $stash->{utf} = (utf8::valid($html_str) and $html_str =~ /[^\p{InBasic_Latin}|\p{isLatin}]/gm) ? 1 : 0;
     unless ($stash->{utf}) {
-	    Encode::_utf8_off($html_str);	    
+        Encode::_utf8_off($html_str);       
     };
     
     # some check
@@ -80,43 +80,43 @@ sub truncate {
     
     # return if source string have small length
     if (length $html_str <= $length) {
-	    # replace entities to numeric if this needed
-    	if ($html_str =~ /&([a-z]+|#\d+);/i) {
-		    HTML::Entities::decode($html_str);
-    		$html_str = $class->_encode_entities($html_str);
-    	};    	
-    	push @ret,$html_str;
+        # replace entities to numeric if this needed
+        if ($html_str =~ /&([a-z]+|#\d+);/i) {
+            HTML::Entities::decode($html_str);
+            $html_str = $class->_encode_entities($html_str);
+        };      
+        push @ret,$html_str;
     } else {
-	    # save length
-	    $stash->{max_length} = $length;
-	    $stash->{cur_length} = 0;
-	    
-	    # make html tree
-	    my $root = HTML::TreeBuilder->new_from_content($html_str);
-	    # iterate html elements
-	    foreach ($root->disembowel()) {
-	        next unless $_;
-	        unless (ref $_) {
-	            # $_ is a string
-	            push @ret,__PACKAGE__->_truncated_text($_);
-	        } elsif (not $stash->{stop}) {
-	            # $_ is a HTML::Element object
-	            push @ret,__PACKAGE__->_get_html($_);
-	        } else {
-	        	$stash->{elips_status} = 2 unless $stash->{elips_status};
-	        	last;
-	        };
-	    };
-	    $root = $root->delete;
+        # save length
+        $stash->{max_length} = $length;
+        $stash->{cur_length} = 0;
+        
+        # make html tree
+        my $root = HTML::TreeBuilder->new_from_content($html_str);
+        # iterate html elements
+        foreach ($root->disembowel()) {
+            next unless $_;
+            unless (ref $_) {
+                # $_ is a string
+                push @ret,__PACKAGE__->_truncated_text($_);
+            } elsif (not $stash->{stop}) {
+                # $_ is a HTML::Element object
+                push @ret,__PACKAGE__->_get_html($_);
+            } else {
+                $stash->{elips_status} = 2 unless $stash->{elips_status};
+                last;
+            };
+        };
+        $root = $root->delete;
     };
     
     push @ret,($stash->{cur_elips} || $stash->{def_elips}) if $stash->{elips_status} == 2;
     my $ret = join('',@ret);
     # after we build html tree, all entities is decoded, and truncated html have utf-8 flag
     if (Encode::is_utf8($ret) and not $stash->{utf} and $Patched::HTML::Truncate::enc !~ /utf/i) {
-	    Encode::from_to($ret,$Patched::HTML::Truncate::enc,$Patched::HTML::Truncate::enc) 
+        Encode::from_to($ret,$Patched::HTML::Truncate::enc,$Patched::HTML::Truncate::enc) 
     } else {
-    	Encode::_utf8_off($ret);
+        Encode::_utf8_off($ret);
     };
     
     $ret;
@@ -140,21 +140,21 @@ sub _truncated_text {
     # and we can used substr 
     my $new_str;
     if ($stash->{utf}) {
-    	my @new_str = $str =~ /([\p{InBasic_Latin}]|[\p{isLatin}][^\p{isLatin}]|[\P{isLatin}|\p{isLatin}]|[\p{InBasic_Latin}][^\p{InBasic_Latin}]|[\P{InBasic_Latin}|\p{InBasic_Latin}])/gm;
-    	my $last_char = scalar @new_str > $need_length ? ($need_length-1) : $#new_str; 
-    	$new_str = join('',@new_str[0..$last_char]); 
-    	$stash->{cur_length} += $last_char+1;
-    	# 1-st elips status  - elips contactened in _truncated_text method
+        my @new_str = $str =~ /([\p{InBasic_Latin}]|[\p{isLatin}][^\p{isLatin}]|[\P{isLatin}|\p{isLatin}]|[\p{InBasic_Latin}][^\p{InBasic_Latin}]|[\P{InBasic_Latin}|\p{InBasic_Latin}])/gm;
+        my $last_char = scalar @new_str > $need_length ? ($need_length-1) : $#new_str; 
+        $new_str = join('',@new_str[0..$last_char]); 
+        $stash->{cur_length} += $last_char+1;
+        # 1-st elips status  - elips contactened in _truncated_text method
         if ($#new_str > $last_char) {
             $stash->{elips_status} = 1;
         };
     } else {
         $new_str = substr($str,0,$need_length);
-	    $stash->{cur_length} += length $new_str;
-	    # 1-st elips status  - elips contactened in _truncated_text method
-	    if (length $new_str < length $str) {
-	        $stash->{elips_status} = 1;
-	    }; 
+        $stash->{cur_length} += length $new_str;
+        # 1-st elips status  - elips contactened in _truncated_text method
+        if (length $new_str < length $str) {
+            $stash->{elips_status} = 1;
+        }; 
     }; 
     
     # check needed length
@@ -172,16 +172,16 @@ sub _truncated_text {
 
 # replace decoded entities, and athoter bytes things to numeric html entities
 sub _encode_entities {
-	my ($class, $str) = @_;
-	return $str unless $str;
-	my $exclude = $stash->{utf} ? '' : '|'.join('\|',chr(247),chr(215));	
-	if ($stash->{utf}) {
-		#$str = $stash->{enc_utf}->encode($str,Encode::FB_XMLCREF);
-		$str =~ s/([^\p{Cyrillic}|\p{IsLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
-	} else {	     
-	    $str =~ s/(?<!\p{isLatin})([^\p{isLatin}|\p{InBasic_Latin}]${exclude}|[<|>|'|"|&])(?!\p{isLatin})/$stash->{enc_cur}->encode($1,Encode::FB_XMLCREF)/xgem;
-	};	
-	$str;
+    my ($class, $str) = @_;
+    return $str unless $str;
+    my $exclude = $stash->{utf} ? '' : '|'.join('\|',chr(247),chr(215));    
+    if ($stash->{utf}) {
+        #$str = $stash->{enc_utf}->encode($str,Encode::FB_XMLCREF);
+        $str =~ s/([^\p{Cyrillic}|\p{IsLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
+    } else {         
+        $str =~ s/([^\p{isLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
+    };  
+    $str;
 }
 
 # this function make valid html string from HTML::Element tree
@@ -247,15 +247,14 @@ sub _get_html {
   join('',@xml);
 }
 
-
-1;
-
 __END__
 =encoding utf-8
 
 =head1 NAME
 
 B<CCCP::HTML::Truncate> - truncate html with html-entities.
+
+I<Version 0.03>
 
 =head1 SYNOPSIS
     
