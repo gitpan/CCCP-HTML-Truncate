@@ -7,16 +7,10 @@ BEGIN {
 
     can_ok('CCCP::HTML::Truncate', 'truncate');
     
-    my $html = "<p><b>Ленин</b> &mdash; жил</p>
-    <p><b>Ленин</b> &mdash; жив</p>\n
-    <p><b>Ленин</b> &mdash; будет жить!</p>\n";
     
-    ok(CCCP::HTML::Truncate->truncate($html,11) eq '<p><b>Ленин</b> &#x2014; жил</p>&#x2026;','truncate utf-8 character');
-    ok(CCCP::HTML::Truncate->truncate($html,11,' &#x262D;') eq '<p><b>Ленин</b> &#x2014; жил</p> &#x262D;','truncate utf-8 character with elips');
+    my $str = "<div>Тут могут быть <b>&mdash; разные entities и &quot; всякие</b> и,\n\n незакрытые теги <div> bla ... bla";
     
-    my $html = "<p><b>�����</b> &mdash; ���</p>
-    <p><b>�����</b> &mdash; ���</p>\n
-    <p><b>�����</b> &mdash; ����� ����!</p>\n";
-    
-    ok(CCCP::HTML::Truncate->truncate($html,11) eq '<p><b>�����</b> &#x2014; ���</p>&#x2026;','truncate koi8-r character');
-    ok(CCCP::HTML::Truncate->truncate($html,11,' &#x262D;') eq '<p><b>�����</b> &#x2014; ���</p> &#x262D;','truncate koi8-r character with elips');
+    ok( CCCP::HTML::Truncate->truncate($str,20) eq '<div>Тут могут быть <b>— раз...</b></div>','No elips, stop in tag');
+    ok( CCCP::HTML::Truncate->truncate($str,20,'...конец') eq '<div>Тут могут быть <b>— раз...конец</b></div>','With elips');
+    ok( CCCP::HTML::Truncate->truncate('',20,'...конец') eq '','Empty value');
+    ok( CCCP::HTML::Truncate->truncate($str,105,'...конец') eq "<div>Тут могут быть <b>— разные entities и \" всякие</b> и,\n\n незакрытые теги <div> bla ... bla</div></div>",'Big value');

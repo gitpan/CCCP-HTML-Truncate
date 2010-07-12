@@ -10,3 +10,6 @@ Revision history for Perl extension CCCP::HTML::Truncate.
     
 0.03 Jul 06 22:06:00
     - fix koi8-r truncate
+
+0.03 Jul 04 2010
+    - XML::LibXML

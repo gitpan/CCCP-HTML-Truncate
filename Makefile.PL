@@ -6,8 +6,7 @@ WriteMakefile(
     NAME              => 'CCCP::HTML::Truncate',
     VERSION_FROM      => 'lib/CCCP/HTML/Truncate.pm', # finds $VERSION
     PREREQ_PM         => {
-    	'HTML::TreeBuilder' => 0,
-    	'HTML::Entities' => 0,
+    	'XML::LibXML' => 0,
     	'Encode' => 0
     }, # e.g., Module::Name => 1.1
     ($] >= 5.005 ?     ## Add these new keywords supported since 5.005

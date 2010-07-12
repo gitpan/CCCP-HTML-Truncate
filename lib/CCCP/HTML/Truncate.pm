@@ -3,250 +3,102 @@ package CCCP::HTML::Truncate;
 use strict;
 use warnings;
 
-our $VERSION = '0.03';
+use XML::LibXML;
+use Encode qw();
 
-use HTML::TreeBuilder;
-use HTML::Entities qw();
-use Encode;
+our $VERSION = '0.04';
 
-# default cyrillic charset
-$Patched::HTML::Truncate::enc = 'koi8-r';
+$CCCP::HTML::Truncate::enc = 'utf-8';
 
-my $xml_entities = {
-    '&' => '&amp;',
-    '"' => '&#x22;',
-    "'" => '&#x27;',
-    '>' => '&gt;',
-    '<' => '&lt;'
-};
-
-# we need a few package variable (is't "thread safe" mode)
-my $stash = {
-    # default elips &#8230; 
-    # in numeric mode:
-    def_elips => '&#x2026;',
-    enc_utf => find_encoding('utf-8'), 
+# ------------------------ EXTEND XML::LibXML::Element -----------------
+# return serialize XML::LibXML::Element in correct encoding
+sub XML::LibXML::Element::html {
+    my ($node, $actualEncoding) = @_;
     
-    # redefined fields
-    # custom elips
-    cur_elips => undef,
-    # needed length
-    max_length => 0,
-    # current length
-    cur_length => 0,
-    # add status elips
-    elips_status => 0,
-    # utf_flag
-    utf => 0,
-    # stoped flag
-    stop => 0,
-    # current default encoding
-    enc_cur => undef
-};
+    # correct decode
+    my $f = Encode::find_encoding($CCCP::HTML::Truncate::enc || $node->ownerDocument->encoding() || $node->ownerDocument->actualEncoding());
+    
+    return $f->encode($node->toString,Encode::FB_XMLCREF);
+}
 
-# clear stash between call methods
-sub _clear_stash {
-    map {$stash->{$_} = undef} ('cur_elips','enc_cur');
-    map {$stash->{$_} = 0} ('max_length','cur_length','elips_status','stop','utf');
+# ---------------------------------------- MAIN --------------------------------------------
+
+# parser obj
+my $lx;
+
+sub _init_parser {
+    return if $lx;
+    $lx = XML::LibXML->new();
+    $lx->recover_silently(1);
 }
 
 # truncate html
 sub truncate {
     my ($class,$html_str,$length,$elips) = @_;
     
-    # clear stash
-    $class->_clear_stash();
-    my @ret = ();
-    
-    # check source string on utf
-    Encode::_utf8_on($html_str);
-    $stash->{utf} = (utf8::valid($html_str) and $html_str =~ /[^\p{InBasic_Latin}|\p{isLatin}]/gm) ? 1 : 0;
-    unless ($stash->{utf}) {
-        Encode::_utf8_off($html_str);       
-    };
-    
-    # some check
     return unless $html_str;
     
-    # save curent elips
-    $stash->{cur_elips} = $elips;
+    $elips ||= "...";
     
-    # check length
-    return '' unless $length;   
     $length ||= 0;
     $length =~ /(\d+)/;
-    $length = $1 || 0;
+    $length = $1 ? $1 : 0;
     return '' unless $length;
+    $html_str =~ s/&amp;/&/gm;
+    return $html_str if length $html_str < $length;
     
-    # return if source string have small length
-    if (length $html_str <= $length) {
-        # replace entities to numeric if this needed
-        if ($html_str =~ /&([a-z]+|#\d+);/i) {
-            HTML::Entities::decode($html_str);
-            $html_str = $class->_encode_entities($html_str);
-        };      
-        push @ret,$html_str;
-    } else {
-        # save length
-        $stash->{max_length} = $length;
-        $stash->{cur_length} = 0;
-        
-        # make html tree
-        my $root = HTML::TreeBuilder->new_from_content($html_str);
-        # iterate html elements
-        foreach ($root->disembowel()) {
-            next unless $_;
-            unless (ref $_) {
-                # $_ is a string
-                push @ret,__PACKAGE__->_truncated_text($_);
-            } elsif (not $stash->{stop}) {
-                # $_ is a HTML::Element object
-                push @ret,__PACKAGE__->_get_html($_);
-            } else {
-                $stash->{elips_status} = 2 unless $stash->{elips_status};
-                last;
+    my $f = Encode::find_encoding($CCCP::HTML::Truncate::enc);
+    $html_str = $f->decode($html_str);
+    $elips = $f->decode($elips);
+    
+    $class->_init_parser();
+    my $root = $lx->parse_html_string($html_str);
+    my ($body) = $root->documentElement()->findnodes('//body');
+    return '' unless $body;
+    
+    my $add_elips = 0;
+    foreach ($body->ownerDocument->findnodes('//child::text()')) {
+        if ($length>0) {
+            my $str = $_->to_literal;
+            my $new_str = substr($str,0,$length);
+            $length -= length $str;
+            if ($length < 1 and not $add_elips) {
+                $new_str .= $elips;
+                $add_elips++;
+                # and skip all another text child
+                my $text_parent = $_->parentNode;                               
+                if ($_->nodePath =~ /\[(\d+)]$/) {
+                    foreach my $skip_text ($text_parent->findnodes(sprintf('//child::text()[position()>%d]',$1))) {
+                        $_->setData('');
+                    };
+                }
             };
-        };
-        $root = $root->delete;
-    };
-    
-    push @ret,($stash->{cur_elips} || $stash->{def_elips}) if $stash->{elips_status} == 2;
-    my $ret = join('',@ret);
-    # after we build html tree, all entities is decoded, and truncated html have utf-8 flag
-    if (Encode::is_utf8($ret) and not $stash->{utf} and $Patched::HTML::Truncate::enc !~ /utf/i) {
-        Encode::from_to($ret,$Patched::HTML::Truncate::enc,$Patched::HTML::Truncate::enc) 
-    } else {
-        Encode::_utf8_off($ret);
-    };
-    
-    $ret;
-}
-
-# inner method - truncate text
-sub _truncated_text {
-    my ($class,$str) = @_;
-    
-    # stoped if we have needed length
-    my $need_length =  $stash->{max_length} - $stash->{cur_length};
-    unless ($need_length and $need_length > 0) {
-        $stash->{stop}++;
-        return '';
-    };
-    
-    # HTML::TreeBuilder decode html entities, i.e. string
-    # &#8230; &mdash; &#x2605; cccp &#x262D;
-    # convert to
-    # \x{2026} \x{2014} \x{2605} cccp \x{262D} 
-    # and we can used substr 
-    my $new_str;
-    if ($stash->{utf}) {
-        my @new_str = $str =~ /([\p{InBasic_Latin}]|[\p{isLatin}][^\p{isLatin}]|[\P{isLatin}|\p{isLatin}]|[\p{InBasic_Latin}][^\p{InBasic_Latin}]|[\P{InBasic_Latin}|\p{InBasic_Latin}])/gm;
-        my $last_char = scalar @new_str > $need_length ? ($need_length-1) : $#new_str; 
-        $new_str = join('',@new_str[0..$last_char]); 
-        $stash->{cur_length} += $last_char+1;
-        # 1-st elips status  - elips contactened in _truncated_text method
-        if ($#new_str > $last_char) {
-            $stash->{elips_status} = 1;
-        };
-    } else {
-        $new_str = substr($str,0,$need_length);
-        $stash->{cur_length} += length $new_str;
-        # 1-st elips status  - elips contactened in _truncated_text method
-        if (length $new_str < length $str) {
-            $stash->{elips_status} = 1;
-        }; 
-    }; 
-    
-    # check needed length
-    $stash->{stop}++ if $stash->{cur_length} >= $stash->{max_length};
-    
-    
-    # replace decoded entities, and athoter bytes things to numeric html entities
-    $new_str = $class->_encode_entities($new_str);
-    
-    # and add elips if we need do it
-    $new_str .= ($stash->{cur_elips} || $stash->{def_elips}) if $stash->{elips_status};
-    
-    $new_str;   
-}
-
-# replace decoded entities, and athoter bytes things to numeric html entities
-sub _encode_entities {
-    my ($class, $str) = @_;
-    return $str unless $str;
-    my $exclude = $stash->{utf} ? '' : '|'.join('\|',chr(247),chr(215));    
-    if ($stash->{utf}) {
-        #$str = $stash->{enc_utf}->encode($str,Encode::FB_XMLCREF);
-        $str =~ s/([^\p{Cyrillic}|\p{IsLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
-    } else {         
-        $str =~ s/([^\p{isLatin}|\p{InBasic_Latin}${exclude}]|[<|>|'|"|&])/HTML::Entities::encode_entities_numeric($1)/xgem;
-    };  
-    $str;
-}
-
-# this function make valid html string from HTML::Element tree
-sub _get_html {
-  my($class,$hent) = @_;
-  my @xml = ();
-  my $empty_element_map = $hent->_empty_element_map;
-
-  # temp variable
-  my($tag, $node, $start);
-  my $skiper = {};
-  
-  # recursion
-  $hent->traverse(
-    sub {
-        ($node, $start) = @_;        
-            if(ref $node) {
-                # we have tag
-                $tag = $node->{'_tag'};
-                
-                if($start) {                    
-                    # add stoped flag if we have needed length
-                    $stash->{stop}++ if (not $stash->{stop} and $stash->{cur_length} >= $stash->{max_length});
-                    
-                    # save in memory open tag (for ignore closed)
-                    if ($stash->{stop}) {
-                        $skiper->{$tag}++;
-                        return 0;
-                    };
-                    
-                    # open tag
-                    if($empty_element_map->{$tag} and !@{$node->{'_content'} || []}) {
-                        # this is empty tag
-                        push(@xml, $node->starttag_XML(undef,1));
-                    } else {
-                        # this tag may have content
-                        push(@xml, $node->starttag_XML(undef));
-                    };
-                } else {
-                    # ignore close tag if open we skip
-                    if ($stash->{stop} and exists $skiper->{$tag} and $skiper->{$tag}--) {                      
-                        return 0;
-                    };
-                    
-                    # close open tag
-                    unless($empty_element_map->{$tag} and !@{$node->{'_content'} || []}) {
-                        push(@xml, $node->endtag_XML());
-                    };
-                };
-            } elsif (not $stash->{stop}) {  
-              # truncated text
-              $node = __PACKAGE__->_truncated_text($node) if $node;
-              push @xml,$node;
-            } else {
-                # in this case we stoped truncate
-                # and add elips flag if we heve text over needed length
-                $stash->{elips_status} = 2 unless $stash->{elips_status};
+            $_->setData($new_str);          
+        } else {
+            my $parent = $_->parentNode;
+            # add elips
+            unless ($add_elips) {
+                $add_elips++;
+                my $elips_el = XML::LibXML::Element->new('span');
+                $elips_el->appendTextNode($elips);
+                $parent->addChild($elips_el);
             };
-        # going on html tree
-        1;
-      }
-  );
-  join('',@xml);
+            # skip body
+            if ($parent->isSameNode($body)) {
+                $_->unbindNode();
+            } else {
+                my @childs = $parent->findnodes($parent->nodePath.'//child::text()');
+                $#childs > 0 ? $_->unbindNode() : $parent->unbindNode();                
+            }
+        }
+    };
+    
+    my $ret = $body->html();
+    $ret =~ s/^<body(.*?)>(<p>)?|(<\/p>)?<\/body>$//igm;
+    return $ret; 
 }
 
+1;
 __END__
 =encoding utf-8
 
@@ -254,26 +106,24 @@ __END__
 
 B<CCCP::HTML::Truncate> - truncate html with html-entities.
 
-I<Version 0.03>
+I<Version 0.04>
 
 =head1 SYNOPSIS
     
-    use CCCP::HTML::Truncate;
+    CCCP::HTML::Truncate;
     
-    my $html = "<p><b>Ленин</b> &mdash; жил</p>
-    <p><b>Ленин</b> &mdash; жив</p>\n
-    <p><b>Ленин</b> &mdash; будет жить!</p>\n";
-    # CASE: Encode::is_utf8($html) eq '0';
+    my $str = "<div>Тут могут быть <b>&mdash; разные entities и &quot; всякие</b> и,\n\n незакрытые теги <div> bla ... bla";
     
-    print CCCP::HTML::Truncate->truncate($html,11);
-    # <p><b>Ленин</b> &#x2014; жил</p>&#x2026;
+    print CCCP::HTML::Truncate->truncate($str,20);
+    # <div>Тут могут быть <b>— раз...</b></div>
     
-    print CCCP::HTML::Truncate->truncate($html,11,' &#x262D;');
-    # <p><b>Ленин</b> &#x2014; жил</p> &#x262D;
+    print CCCP::HTML::Truncate->truncate($str,20,'...конец');
+    # <div>Тут могут быть <b>— раз...конец</b></div>
     
 =head1 DESCRIPTION
 
-Truncate html string. Correct job with html entities.
+Truncate html string. 
+Correct job with html entities.
 Validate truncated html.
 
 =head1 METHODS
@@ -285,14 +135,29 @@ Return truncated html string.
 
 =head1 PACKAGE VARIABLES
 
-=head3 $Patched::HTML::Truncate::enc
+=head3 $CCCP::HTML::Truncate::enc
 
-If source string in 'utf-8', return truncated 'utf-8', otherwise return truncated string in $Patched::HTML::Truncate::enc.
-Default 'koi8-r'
+Charset for source html.
+Default 'utf-8'.
+
+=head1 BENCHMARK
+
+	Benchmark: timing 10000 iterations of CCCP::HTML::Truncate, HTML::Truncate...
+	CCCP::HTML::Truncate:  4 wallclock secs ( 4.55 usr +  0.00 sys =  4.55 CPU) @ 2197.80/s (n=10000)
+	HTML::Truncate:        5 wallclock secs ( 4.86 usr +  0.00 sys =  4.86 CPU) @ 2057.61/s (n=10000)
+	
+	Benchmark: timing 25000 iterations of CCCP::HTML::Truncate, HTML::Truncate...
+	CCCP::HTML::Truncate: 12 wallclock secs (11.37 usr +  0.00 sys = 11.37 CPU) @ 2198.77/s (n=25000)
+	HTML::Truncate:       12 wallclock secs (12.12 usr +  0.01 sys = 12.13 CPU) @ 2061.01/s (n=25000)
+
+
+=head1 WARNING
+
+Version oldest 0.04 is DEPRECATED 
 
 =head1 SEE ALSO
 
-C<HTML::TreeBuilder>, C<Encode>, C<HTML::Entities>, unicode regexp
+C<XML::LibXML>, C<Encode>
 
 =head1 AUTHOR
 
